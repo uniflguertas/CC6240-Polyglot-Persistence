@@ -1,1 +1,1 @@
-# CC6240-Polyglot-Persistence
+# CC6240: Polyglot Persistence
