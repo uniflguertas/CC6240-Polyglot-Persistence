@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  # DB1: Document Catalog (Local)
+  mongo_db:
+    image: mongo:6
+    container_name: polyglot_mongo
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+
+  # DB2: Volatile Shopping Cart (Local)
+  redis_db:
+    image: redis:7-alpine
+    container_name: polyglot_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
