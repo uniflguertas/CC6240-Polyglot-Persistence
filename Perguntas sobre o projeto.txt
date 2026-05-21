@@ -1,0 +1,63 @@
+1) Qual o tema do projeto? Por que este tema foi escolhido? Quais outros temas foram considerados?
+R: O tema é um Marketplace/Loja Online focado em produtos tecnológicos. A escolha deste tema justifica-se por ser o cenário prático perfeito para a demonstração da persistência poliglota. Um marketplace exige lidar simultaneamente com dados de alta consistência transacional (dados de clientes e histórico de pedidos), dados polimórficos de esquema flexível (fichas técnicas variadas de produtos diferentes) e dados efêmeros de altíssima velocidade (carrinho de compras do usuário). Outros temas considerados foram um Sistema de Streaming de Mídia (que dividiria dados entre relacional para usuários, grafos para recomendação e blob para arquivos) e uma Plataforma IoT (Internet das Coisas).
+
+2) Quem são os integrantes do grupo?
+R: Luís Fernando Souza Gonçalves - RA: 24.123.052-3
+   Luís Miguel de Almeida Guertas - RA: 24.123.040-8
+
+3) Quais bancos serão usados? Quais dados serão armazenados em cada banco? Explique o motivo da escolha de cada banco.
+R: * PostgreSQL (Relacional): Armazenará clientes, pedidos faturados e itens do pedido. Motivo: Transações financeiras e dados sensíveis exigem propriedades ACID e restrições de integridade referencial via Foreign Keys.
+
+    MongoDB (Document Storage): Armazenará o catálogo de produtos. Motivo: Os produtos de tecnologia possuem fichas técnicas altamente variadas (um teclado tem switch, um monitor tem frequência hz). O esquema flexível (JSON/BSON) permite armazenar essas particularidades no campo technical_details sem poluir uma tabela relacional com colunas nulas.
+
+    Redis (Chave-Valor): Armazenará o carrinho de compras. Motivo: Carrinhos sofrem mutações constantes antes do checkout e têm alto índice de abandono. O Redis mantém isso na memória RAM para acesso em submilisegundos e usa a função TTL (Time-To-Live) para autodestruir carrinhos abandonados, poupando espaço nos bancos principais.
+
+4) Qual linguagem será utilizada e quais são os pacotes necessários? Em qual ambiente será desenvolvido? Explique o motivo da escolha.
+R: A linguagem é o Python (versão 3.14). Os pacotes principais (listados no requirements.txt) são: fastapi (framework web web assíncrono), pydantic (validação de dados), sqlalchemy + psycopg[binary] (ORM e driver do Postgres), motor (driver assíncrono do MongoDB) e redis. O ambiente de desenvolvimento base é o sistema operacional Manjaro Linux. A escolha do Python com FastAPI deve-se ao excelente suporte a I/O assíncrono (async/await), vital para um backend que atua como orquestrador comunicando-se simultaneamente com três bancos de dados diferentes via rede sem bloquear a execução principal.
+
+5) Considerando o teorema CAP, o que pode acontecer quando cada um dos bancos não estiver disponível?
+R: * PostgreSQL: Foca em Consistência (C) e Disponibilidade (A). Em caso de particionamento (P), pode bloquear escritas para manter a consistência. Se ficar indisponível, a aplicação não poderá autenticar usuários, cadastrar clientes ou efetuar a transação de checkout da compra.
+
+    MongoDB: É fundamentalmente CP (Consistência e Tolerância a Partição). Se o nó primário ficar indisponível, o sistema perde Disponibilidade (A) para escritas até a eleição de um novo primário. O impacto é a impossibilidade de gerenciar estoque e listar produtos.
+
+    Redis: Pode ser configurado como AP ou CP. Na nossa aplicação in-memory, se o Redis falhar, perdemos apenas as sessões de carrinhos de compras em andamento. Nenhuma informação financeira consolidada é perdida.
+
+6) Descreva como cada um dos bancos trabalha com o princípio de consistência.
+R: * PostgreSQL: Utiliza consistência forte imediata. Ao aplicar o COMMIT no checkout, as propriedades ACID garantem que as tabelas de pedidos estarão instantaneamente visíveis no novo estado para qualquer leitor subsequente.
+
+    MongoDB: Possui consistência forte para leituras e escritas direcionadas ao nó primário. Porém, caso as leituras fossem roteadas para nós secundários (réplicas), trabalharia sob consistência eventual.
+
+    Redis: No modelo standard, oferece consistência forte num único nó, garantindo que adições ao carrinho reflitam instantaneamente. Em cenários de cluster, pode apresentar consistência eventual devido à replicação assíncrona.
+
+7) Para os bancos não-relacionais que possuem mais do que uma réplica e/ou particionamento, o que ocorre quando uma instância do banco fica indisponível? Quantas instâncias podem ficar indisponível e ainda garantir a consistência dos dados?
+R: O MongoDB (hospedado no Atlas) usa a topologia de Replica Set, composta tipicamente por um mínimo de 3 nós (1 Primário e 2 Secundários). Se o nó primário cair, ocorre um processo de eleição automática onde um secundário é promovido a primário. Para que haja quórum de eleição e o banco continue consistente e aceitando escritas, a maioria absoluta dos nós deve estar viva. Em um cluster de 3 instâncias, 1 instância pode ficar indisponível. Se 2 caírem, a última restante assume modo read-only (apenas leitura) para proteger a consistência, sacrificando a disponibilidade.
+
+8) Como foi decidida a divisão dos dados em cada um dos bancos? Por que foi dividido desta forma?
+R: A divisão obedeceu a matriz de risco e uso da informação: dados críticos e financeiros (pedidos, clientes) foram para o RDB por segurança transacional. Dados de escopo mutável e sem formato rígido (especificações de produtos) foram para DB1 (Documentos) para facilitar a modelagem e consultas aninhadas. Dados temporários e de altíssima rotatividade (sessões do usuário/carrinho) foram para o DB2 (Chave-Valor in-memory). Foi feito desta forma para evitar antipadrões (como fazer bancos SQL gerenciarem sessões voláteis no disco ou documentos perderem restrições de Foreign Key).
+
+9) Quais outros bancos foram considerados, além dos que foram escolhidos? O que levou o grupo a escolher estes bancos e não os outros?
+R: Para o RDB, considerou-se MySQL; optamos pelo PostgreSQL pela maturidade de seus drivers assíncronos e estabilidade em nuvem. Para o DB1, considerou-se DynamoDB e Cassandra; o MongoDB foi escolhido pelo suporte superior a consultas hierárquicas e agregação nativa via documentos BSON. Para o DB2, considerou-se o Memcached; o Redis foi escolhido por possuir mais estruturas de dados (hash, sets) e suporte nativo robusto a TTL (expiração automática).
+
+10) Será utilizado ORM para conectar com o banco? Qual ORM ou por que não será usado?
+R: Sim, para o banco de dados relacional (PostgreSQL) utilizaremos o SQLAlchemy no modo assíncrono. O ORM foi escolhido pois agiliza o mapeamento declarativo das classes Python (Customer, Order) diretamente para tabelas, mitiga riscos de SQL Injection e abstrai o gerenciamento transacional complexo que ocorre na rota de checkout. Para MongoDB e Redis, utilizam-se clientes nativos de abstração (motor e redis-py).
+
+11) Qual o formato dos dados que será utilizado no programa para representar os dados no banco relacional?
+R: No nível da aplicação (Backend), os dados são representados por Classes Orientadas a Objetos. Utilizamos as classes mapeadas do SQLAlchemy (DeclarativeBase) para interagir com o banco de forma assíncrona, e objetos modelo do Pydantic (CustomerCreate, CustomerResponse) para serializar, validar e representar o fluxo de entrada e saída no formato JSON para o usuário.
+
+12) Seria possível armazenar os dados do banco relacional em um banco não-relacional sem perder funcionalidades do projeto? Explique sua resposta.
+R: Haveria perda severa de funcionalidades garantidoras, especialmente de segurança relacional. Migrar o motor de pagamentos para um NoSQL como o Mongo exigiria implementar controle de concorrência e JOINs simulados diretamente no código da aplicação (o que afeta a performance) ou aninhar todo o histórico de compras dentro do documento do cliente. Isso geraria documentos gigantescos (Unbounded Arrays) e perderíamos o controle de Foreign Keys nativo, abrindo brechas para ordens órfãs e dados inconsistentes no sistema.
+
+13) Seria possível armazenar os dados do banco não-relacional DB1 em um banco relacional ou outro tipo de NoSQL sem perder funcionalidades do projeto?
+R: Tentar emular os atributos do MongoDB no PostgreSQL exigiria adotar o antipadrão Entity-Attribute-Value (EAV), resultando em dezenas de tabelas de metadados e lentidão brutal nas junções de consulta, ou forçaria o uso excessivo de colunas textuais tipo JSONB. Apesar de funcional, perde-se os mecanismos nativos de indexação otimizada, busca textual e agregação polimórfica que os Document Storages fornecem com naturalidade.
+
+14) Qual banco foi escolhido para o DB1 e qual o formato (i.e., tipo) dos dados que serão armazenados? Quais outras opções foram consideradas? Explique a escolha.
+R: O MongoDB Atlas foi o escolhido. O formato armazenado são documentos JSON/BSON. Opções consideradas foram bancos da família de colunas (Wide-Column) como Apache Cassandra. A escolha do MongoDB prevaleceu devido ao fato de que o conceito de um produto de catálogo é intrinsecamente orientado a documentos (uma entidade que engloba seus próprios arrays e dicionários de sub-características), além do suporte de MongoDB a tipos avançados como Decimal128, exigido para não perder precisão em conversões financeiras em ponto flutuante.
+
+15) Qual banco foi escolhido para o DB2 e qual o formato (i.e., tipo) dos dados que serão armazenados? Quais outras opções foram consideradas? Explique a escolha.
+R: O Redis (Redis Cloud) foi o escolhido. O formato armazenado é do tipo Chave-Valor, onde a chave é o ID do cliente em texto (ex: cart:1) e o valor é uma string serializada contendo o array JSON dos produtos. Considerou-se o Memcached. Escolhemos o Redis porque, além de operar totalmente em memória para I/O instantâneo, ele manipula estruturas compostas de forma nativa e facilita o agendamento de expiração de dados indesejados via chave-específica (TTL).
+
+16) Onde o projeto será executado no dia da apresentação? Qual o mínimo necessário para que ele seja desenvolvido? Por que será feito dessa forma?
+R: Será executado localmente na máquina pessoal (ambiente Manjaro Linux). O mínimo necessário é apenas o interpretador Python 3, conexão à internet e o preenchimento do arquivo de credenciais locais .env. Foi desenhado desta forma porque 100% da infraestrutura de bancos de dados está externalizada na nuvem (DBaaS via Supabase, Mongo Atlas e Redis Labs), evitando que a máquina do aluno sofra com o consumo de I/O e processamento dos SGBDs locais ou erros de permissão de contêineres Docker de última hora.
+
+17) Caso no dia da apresentação o equipamento utilizado para o desenvolvimento não esteja disponível, como será feita a apresentação?
+R: A recuperação da operação é iminente. Como a infraestrutura física de bancos já opera isolada na nuvem de forma serverless, bastaria utilizar qualquer outro computador (da instituição ou de colega), clonar o repositório do projeto via GitHub, instanciar um ambiente virtual (python -m venv), instalar as dependências a partir do requirements.txt, e rodar a API. O sistema imediatamente reestabeleceria conexão com as tabelas, documentos e caches populados da nuvem.
